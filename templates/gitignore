@@ -1,0 +1,12 @@
+node_modules/
+.env
+.auth/
+test-results/
+playwright-report/
+blob-report/
+dist/
+.qa-tmp/
+
+# Generated on every run
+reports/*.log
+reports/playwright-results.json

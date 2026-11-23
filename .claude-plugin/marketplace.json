@@ -1,0 +1,14 @@
+{
+  "name": "qa-agent-module",
+  "description": "QA Agent Module for Claude Code",
+  "owner": {
+    "name": "harsh prajapati"
+  },
+  "plugins": [
+    {
+      "name": "qa",
+      "source": "./",
+      "description": "Plan, generate, self-heal, and security-audit Playwright test suites for any URL. Run with /qa:run-qa <url>."
+    }
+  ]
+}

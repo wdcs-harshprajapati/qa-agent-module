@@ -1,0 +1,26 @@
+{
+  "name": "qa",
+  "version": "1.0.0",
+  "description": "QA Agent Module: give a URL, get a reviewed test plan, a Playwright TypeScript suite (Page Object Model), self-healing runs, a non-destructive security audit, and a QA report. Run with /qa:run-qa <url>.",
+  "author": {
+    "name": "harsh prajapati"
+  },
+  "homepage": "https://github.com/wdcs-harshprajapati/qa-agent-module",
+  "repository": "https://github.com/wdcs-harshprajapati/qa-agent-module",
+  "keywords": [
+    "qa",
+    "playwright",
+    "testing",
+    "e2e",
+    "accessibility",
+    "security"
+  ],
+  "mcpServers": {
+    "playwright": {
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/scripts/playwright-mcp.js"
+      ]
+    }
+  }
+}
