@@ -52,8 +52,10 @@ Restart Claude Code after installing. Then check `/mcp`: it should list `plugin:
 2. Run `/qa:run-qa https://your-app.example.com`.
 3. Answer the intake questions: Web2 or Web3, login details, test data, and whether write actions (forms, orders) are safe.
 4. Review the test plan Claude shows you. Approve it or ask for changes. No code is generated before you approve.
-5. Choose the run settings: which browsers to test (Chrome, Firefox, Safari, Mobile Chrome, Mobile Safari), and whether screenshots and video are recorded for every test, only on failure, or not at all.
-6. Claude generates the suite, runs it in a visible browser, heals test issues, runs the security audit, and writes the report.
+   At intake Claude also asks whether the app has several environments (dev, staging, production) and whether login sends OTP or verification emails (optionally read automatically through MailSlurp, free for 500 emails a month).
+5. Choose the run settings: which browsers to test (Chrome, Firefox, Safari, Mobile Chrome, Mobile Safari), whether screenshots and video are recorded for every test, only on failure, or not at all, and how mobile browsers run: emulation (default screen sizes), BrowserStack real devices, or an Android emulator from the Android SDK.
+6. Claude generates the suite (functional, visual, API, performance, and mobile UX tests), runs it in a visible browser, heals test issues, runs the security audit (including an exposed-secret scan), and writes the report.
+7. If tests failed, Claude asks whether to file the defects in Jira through the Atlassian MCP (or only show Jira-style issues), and whether to re-run only the failed tests.
 
 Claude never guesses credentials, OTPs, or business rules. When something is missing, it asks you.
 
@@ -67,13 +69,21 @@ your-workspace/
 ├── specs/test-plan.md      # Approved plan: UI-xx, POS-xx, NEG-xx cases
 ├── pages/*.page.ts         # Page objects (all selectors live here)
 ├── fixtures/auth.fixture.ts# Shared tab, state reset, saved login session
-├── tests/*.spec.ts         # Positive Cases / Negative Cases specs
+├── specs/api-inventory.md  # API calls seen while exploring (no values)
+├── tests/*.spec.ts         # Positive/Negative, @visual, @api, @perf, @mobile-ux specs
+├── tests/__screenshots__/  # Visual regression baselines
 ├── reporters/bug-reporter.ts # Writes a Jira-ready bug report for each failed test
 ├── reports/
 │   ├── qa-report-latest.md # Summary, coverage, defects, security
 │   ├── failed-test-cases.md  # All failed tests: description, steps, expected, actual
 │   ├── failed-test-cases.csv # Jira "Import issues from CSV"
-│   ├── bug-reports/        # One ticket per failed test and browser
+│   ├── bug-reports/        # One ticket per failed test case (all affected browsers)
+│   ├── run-comparison.md   # New failures, fixed, still failing vs earlier runs
+│   ├── history.json        # Totals of every run
+│   ├── performance.md      # Web Vitals per page
+│   ├── mobile-ux.md        # Mobile UX issues
+│   ├── secret-scan.json    # Exposed secrets and files (redacted)
+│   ├── runs/<run-id>/      # Archive of each run with screenshots, videos, traces
 │   ├── healing-log.md      # What was fixed, what is a real defect
 │   └── security-findings.md
 └── README.md               # Runbook for the generated suite
@@ -86,6 +96,9 @@ npm test               # all tests in the browsers from .env, headed, one tab pe
 npm run test:headless  # no browser window
 npm run test:desktop   # Chrome, Firefox, Safari
 npm run test:mobile    # Mobile Chrome (Galaxy S25 Ultra), Mobile Safari (iPhone 16 Pro)
+npm run test:failed    # only the tests that failed last time
+npm run test:visual    # visual regression (refresh baselines: npm run test:update-baselines)
+npm run test:api       # API tests; also test:perf and test:mobile-ux
 npm run test:ui        # Playwright UI mode
 npm run report         # HTML report with screenshots and traces
 ```
@@ -109,7 +122,11 @@ npm run report         # HTML report with screenshots and traces
 - **Browsers:** Chrome, Firefox, Safari (1440x900), Mobile Chrome (Samsung Galaxy S25 Ultra, 412x891), and Mobile Safari (iPhone 16 Pro, 402x874). You pick which ones after approving the plan.
 - **Headed:** tests run in a visible browser. Set `HEADLESS=true` in `.env` or use `npm run test:headless` to hide it.
 - **Screenshots and video:** on for every test by default; you can choose only-on-failure or off.
-- **Bug reports:** every failed test gets a Jira-ready ticket (description, preconditions, steps, expected, actual, environment, attachments) in `reports/bug-reports/`, plus `reports/failed-test-cases.csv` for Jira CSV import.
+- **Bug reports:** one Jira-ready ticket per failed test case (description, preconditions, steps, expected, actual per browser, environment, attachments) in `reports/bug-reports/`, plus `reports/failed-test-cases.csv` for Jira CSV import. With the Atlassian MCP connected, Claude can create the Jira issues for you after your approval.
+- **Run history:** every run is archived in `reports/runs/`, and `reports/run-comparison.md` shows what is new, fixed, still failing, or unstable.
+- **Mobile modes:** emulation by default; real devices on BrowserStack (account needed) or real Chrome in an Android emulator (Android SDK). iOS simulators are not supported by Playwright.
+- **More checks:** visual regression, API tests from the endpoints seen while exploring, Web Vitals on key pages (only "poor" values fail), mobile UX (tap targets, horizontal scroll, text size), and an exposed-secret scan in the security audit.
+- **Playwright Test MCP:** the plugin also starts Playwright's own Test MCP server (`plugin:qa:playwright-test`) inside a QA workspace, so the generator and healer can debug tests at the exact failure point. Reconnect it with `/mcp` after the first scaffold.
 - **Single-tab mode:** all cases run in order in one browser tab per project. A failed test opens a new tab, because Playwright restarts its worker after a failure.
 - **No bug masking:** assertions are never weakened to make tests pass.
 - **Secrets only in `.env`**, never in code, reports, or chat.
@@ -135,3 +152,7 @@ claude plugin uninstall qa@qa-agent-module
 | `BASE_URL is not set` | Copy `.env.example` to `.env` in the workspace and fill in the values. |
 | `QA_PROJECTS has unknown project(s)` | Use only `all`, `Chrome`, `Firefox`, `Safari`, `Mobile Chrome`, `Mobile Safari` in `.env`. |
 | Firefox or Safari browser missing | Run `npm run setup` in the workspace. |
+| `plugin:qa:playwright-test` failed to connect | Normal before the workspace exists. After `/qa:run-qa` has run `npm install`, reconnect it with `/mcp`. |
+| Android emulator: `sharedContext` timeout | Chrome is not reading Playwright's command line. Run `adb shell am set-debug-app --persistent com.android.chrome` (or enable "Enable command line on non-rooted devices" in the emulator's `chrome://flags`) and dismiss Chrome's first-run screens. For a `localhost` app run `adb reverse tcp:<port> tcp:<port>`. |
+| `QA_ENV is "x" but .env.x does not exist` | Create `.env.x` with that environment's `BASE_URL`, or fix `QA_ENV` in `.env`. |
+| A `@visual` test fails after an intended UI change | Review the diff image in the bug report, then run `npm run test:update-baselines`. |

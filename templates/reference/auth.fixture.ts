@@ -14,7 +14,7 @@
  *   worker and therefore a new tab.
  * - Playwright always restarts the worker after a failed test, so a failure opens a new tab.
  */
-import { test as base, expect, BrowserContext, Cookie, Page } from '@playwright/test';
+import { test as base, expect, _android, AndroidDevice, BrowserContext, Cookie, Page } from '@playwright/test';
 import fs from 'fs';
 import path from 'path';
 // ADAPT: import the page objects this suite uses.
@@ -95,22 +95,38 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       const u = workerInfo.project.use;
       // Manually created contexts do not get the config's testIdAttribute; set it globally.
       if (u.testIdAttribute) playwright.selectors.setTestIdAttribute(u.testIdAttribute);
-      const context = await browser.newContext({
-        baseURL: u.baseURL,
-        viewport: u.viewport,
-        screen: u.screen,
-        userAgent: u.userAgent,
-        deviceScaleFactor: u.deviceScaleFactor,
-        isMobile: u.isMobile,
-        hasTouch: u.hasTouch,
-        proxy: u.proxy,
-        ignoreHTTPSErrors: u.ignoreHTTPSErrors,
-        acceptDownloads: true,
-      });
+      const common = { baseURL: u.baseURL, proxy: u.proxy, ignoreHTTPSErrors: u.ignoreHTTPSErrors, acceptDownloads: true };
+      const meta = workerInfo.project.metadata ?? {};
+      let device: AndroidDevice | undefined;
+      let context: BrowserContext;
+
+      if (meta.android) {
+        // QA_MOBILE_MODE=android-emulator: Chrome inside a running emulator. ANDROID_SERIAL picks
+        // one device when several are attached (see `adb devices`).
+        const devices = await _android.devices();
+        device = devices.find((d) => !process.env.ANDROID_SERIAL || d.serial() === process.env.ANDROID_SERIAL);
+        if (!device) throw new Error('No Android emulator found. Start one and check `adb devices`.');
+        await device.shell('am force-stop com.android.chrome');
+        context = await device.launchBrowser(common);
+      } else if (meta.realDevice) {
+        // QA_MOBILE_MODE=browserstack: real device, so no viewport or user agent emulation.
+        context = await browser.newContext(common);
+      } else {
+        context = await browser.newContext({
+          ...common,
+          viewport: u.viewport,
+          screen: u.screen,
+          userAgent: u.userAgent,
+          deviceScaleFactor: u.deviceScaleFactor,
+          isMobile: u.isMobile,
+          hasTouch: u.hasTouch,
+        });
+      }
       await context.tracing.start({ screenshots: true, snapshots: true });
       await use(context);
       await context.tracing.stop();
       await context.close();
+      await device?.close();
     },
     { scope: 'worker' },
   ],

@@ -1,0 +1,22 @@
+# BrowserStack real-device runs (QA_MOBILE_MODE=browserstack). Copied by /qa:run-qa only when
+# the user chose BrowserStack. Run with: npm run test:browserstack
+#
+# Credentials are NOT stored here. The BrowserStack SDK reads them from the environment:
+#   BROWSERSTACK_USERNAME, BROWSERSTACK_ACCESS_KEY  (put them in .env; the user types them)
+#
+# Device names must match BrowserStack's list: https://www.browserstack.com/list-of-browsers-and-platforms/playwright
+# Keep only the devices for the mobile browsers the user selected.
+platforms:
+  - deviceName: Samsung Galaxy S25 Ultra
+    osVersion: 15.0
+    browserName: chrome
+  - deviceName: iPhone 16 Pro
+    osVersion: 18
+    browserName: safari
+
+projectName: QA Agent Module
+buildName: qa-run
+parallelsPerPlatform: 1
+debug: true
+networkLogs: true
+consoleLogs: info

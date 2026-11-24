@@ -25,10 +25,19 @@ You are an Application Security QA Engineer. You receive a **Run Context** from 
    - Check API responses for sensitive data exposure or missing authorization headers. IDOR checks need a second test account — escalate if one was not provided.
 4. **HTTP Security Headers:**
    - Run `curl -sI <TARGET_URL>` via Bash to verify `Content-Security-Policy`, `Strict-Transport-Security`, `X-Frame-Options`, `X-Content-Type-Options`, and `CORS` (`Access-Control-Allow-Origin`) configurations.
-5. **Burp Proxy (only if the Run Context contains `Burp: on`):** Run `USE_BURP=true npx playwright test` so all HTTP/HTTPS requests are routed through Burp Suite Proxy (`127.0.0.1:8080`) for manual review. Otherwise skip this step silently and do not mention Burp in output.
+5. **Exposed Secrets and Files:**
+   - Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/secret-scan.mjs" <BASE_URL> <full URLs of key pages and GET API endpoints from specs/api-inventory.md> --out reports/secret-scan.json` via Bash. Pass full URLs (`https://host/path`), not bare paths: Git Bash on Windows rewrites arguments that start with `/`.
+   - It scans page HTML, same-origin JavaScript bundles and inline scripts, the given API responses, and public source maps for API keys, tokens, private keys, and hardcoded secrets, and requests well-known files that must not be public (`/.env`, `/.git/config`, `/.git/HEAD`, ...). Output is already redacted.
+   - Review each finding before reporting it: a Google Maps/Firebase browser key is expected to be public (report as Low "check it is restricted"), while a secret key, private key, or exposed `.env` is a confirmed High/Critical finding. Mark unconfirmed generic matches as "Needs review".
+6. **API Exposure** (from `specs/api-inventory.md`):
+   - Call each protected `GET` endpoint without the session (and with an obviously invalid token) and confirm `401`/`403`, never data.
+   - Check responses for fields that should not reach the browser (password hashes, full tokens, internal IDs of other users, personal data beyond what the page shows) and for verbose errors (stack traces, SQL, framework debug pages) on invalid input.
+   - Check CORS on API responses: `Access-Control-Allow-Origin: *` together with credentials, or a reflected arbitrary `Origin`, is a finding.
+   - Only `GET` and `OPTIONS`. Never send write requests unless write actions are allowed, and never `DELETE`.
+7. **Burp Proxy (only if the Run Context contains `Burp: on`):** Run `USE_BURP=true npx playwright test` so all HTTP/HTTPS requests are routed through Burp Suite Proxy (`127.0.0.1:8080`) for manual review. Otherwise skip this step silently and do not mention Burp in output.
 
 ### Output
-Write `reports/security-findings.md`: one entry per check with status (Pass / Fail / Not Tested + reason), risk rating (Critical/High/Medium/Low/Info), affected endpoint/storage/header, evidence (redacted), and remediation guidance. Return a short summary to the orchestrator.
+Write `reports/security-findings.md` (include a section **Exposed Secrets** from `reports/secret-scan.json`, redacted): one entry per check with status (Pass / Fail / Not Tested + reason), risk rating (Critical/High/Medium/Low/Info), affected endpoint/storage/header, evidence (redacted), and remediation guidance. Return a short summary to the orchestrator.
 
 ### Exploration Mode
 - Default (`Exploration: mcp`): use the Playwright MCP tools (`mcp__plugin_qa_playwright__*`).

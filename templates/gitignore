@@ -10,3 +10,12 @@ dist/
 # Generated on every run
 reports/*.log
 reports/playwright-results.json
+.env.*
+!.env.example
+
+# Run archive (screenshots, videos, traces of every run)
+reports/runs/
+
+# BrowserStack SDK
+log/
+browserstack.err

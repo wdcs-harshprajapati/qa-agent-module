@@ -1,5 +1,20 @@
-import 'dotenv/config';
+import fs from 'fs';
+import dotenv from 'dotenv';
 import { defineConfig, devices, type Project } from '@playwright/test';
+
+// Environment files. Precedence: command line > .env.<QA_ENV> > .env
+//   .env           shared run settings (QA_PROJECTS, SCREENSHOT, VIDEO, ...) and QA_ENV
+//   .env.<name>    one file per environment (BASE_URL and that environment's credentials)
+// Switch environment for one run: npx cross-env QA_ENV=staging playwright test
+const baseEnv = fs.existsSync('.env') ? dotenv.parse(fs.readFileSync('.env')) : {};
+const qaEnv = process.env.QA_ENV || baseEnv.QA_ENV || '';
+if (qaEnv) {
+  const envFile = `.env.${qaEnv}`;
+  if (!fs.existsSync(envFile)) throw new Error(`QA_ENV is "${qaEnv}" but ${envFile} does not exist.`);
+  dotenv.config({ path: envFile });
+}
+dotenv.config();
+process.env.QA_ENV = qaEnv;
 
 const useBurp = process.env.USE_BURP === 'true';
 
@@ -8,10 +23,15 @@ if (!process.env.BASE_URL) {
 }
 
 // Run settings chosen in /qa:run-qa after plan approval, stored in .env:
-//   QA_PROJECTS  comma-separated project names below, or "all" (default: all)
-//   HEADLESS     true runs without a browser window (default: false, headed)
+//   QA_PROJECTS     comma-separated project names below, or "all" (default: all)
+//   HEADLESS        true runs without a browser window (default: false, headed)
+//   QA_MOBILE_MODE  emulation (default) | android-emulator | browserstack
 //   SCREENSHOT / VIDEO are read by fixtures/auth.fixture.ts (see .env.example).
 const headless = process.env.HEADLESS === 'true';
+const mobileMode = process.env.QA_MOBILE_MODE || 'emulation';
+if (!['emulation', 'android-emulator', 'browserstack'].includes(mobileMode)) {
+  throw new Error(`QA_MOBILE_MODE "${mobileMode}" is not valid. Use emulation, android-emulator, or browserstack.`);
+}
 
 // Galaxy S25 Ultra is not in Playwright's device registry yet. Real values: 6.9" 1440x3120,
 // CSS viewport 412x891 at DPR 3.5. The user agent reuses the registry's current Chrome version.
@@ -24,6 +44,47 @@ const galaxyS25Ultra = {
 };
 
 const desktopViewport = { width: 1440, height: 900 };
+
+// Visual baselines live in one folder per OS and browser project. Real devices (emulator,
+// BrowserStack) render differently from emulation, so they get their own baseline folder.
+const snapshots = (folder: string) => `{testDir}/__screenshots__/{platform}/${folder}/{testFilePath}/{arg}{ext}`;
+
+// Mobile projects per mode. The shared-tab fixture reads metadata.android / metadata.realDevice.
+// - android-emulator: Chrome inside a running Android emulator (adb). iOS simulators need macOS
+//   and are not supported by Playwright, so Mobile Safari stays emulated in this mode.
+// - browserstack: real devices through the BrowserStack SDK (npm run test:browserstack).
+const mobileChrome: Project =
+  mobileMode === 'android-emulator'
+    ? {
+        name: 'Mobile Chrome',
+        metadata: { device: 'Android emulator (adb)', android: true },
+        snapshotPathTemplate: snapshots('{projectName}-android-emulator'),
+        // Headless only hides the unused desktop browser; the emulator window shows the test.
+        use: { browserName: 'chromium', isMobile: true, hasTouch: true, headless: true },
+      }
+    : mobileMode === 'browserstack'
+      ? {
+          name: 'Mobile Chrome',
+          metadata: { device: 'BrowserStack real device', realDevice: true },
+          snapshotPathTemplate: snapshots('{projectName}-browserstack'),
+          use: { browserName: 'chromium' },
+        }
+      : { name: 'Mobile Chrome', metadata: { device: 'Samsung Galaxy S25 Ultra' }, use: galaxyS25Ultra };
+
+const mobileSafari: Project =
+  mobileMode === 'browserstack'
+    ? {
+        name: 'Mobile Safari',
+        metadata: { device: 'BrowserStack real device', realDevice: true },
+        snapshotPathTemplate: snapshots('{projectName}-browserstack'),
+        use: { browserName: 'webkit' },
+      }
+    : {
+        // Registry descriptor: screen 402x874 @ 3x, Safari visible viewport 402x681, WebKit.
+        name: 'Mobile Safari',
+        metadata: { device: 'iPhone 16 Pro' },
+        use: { ...devices['iPhone 16 Pro'] },
+      };
 
 const allProjects: Project[] = [
   {
@@ -41,17 +102,8 @@ const allProjects: Project[] = [
     metadata: { device: 'Desktop 1440x900' },
     use: { ...devices['Desktop Safari'], viewport: desktopViewport },
   },
-  {
-    name: 'Mobile Chrome',
-    metadata: { device: 'Samsung Galaxy S25 Ultra' },
-    use: galaxyS25Ultra,
-  },
-  {
-    // Registry descriptor: screen 402x874 @ 3x, Safari visible viewport 402x681, WebKit.
-    name: 'Mobile Safari',
-    metadata: { device: 'iPhone 16 Pro' },
-    use: { ...devices['iPhone 16 Pro'] },
-  },
+  mobileChrome,
+  mobileSafari,
 ];
 
 const selected = (process.env.QA_PROJECTS || 'all').split(',').map((s) => s.trim()).filter(Boolean);
@@ -73,9 +125,16 @@ export default defineConfig({
     ['list'],
     ['json', { outputFile: 'reports/playwright-results.json' }],
     ['html', { outputFolder: 'playwright-report', open: 'never' }],
-    // Jira-ready bug report for every failed test: reports/failed-test-cases.{md,csv}, reports/bug-reports/
+    // Jira-ready bug reports, run archive, and run comparison (see reporters/bug-reporter.ts).
     ['./reporters/bug-reporter.ts'],
   ],
+  // Visual regression baselines (@visual tests): one set per OS and browser project. Comparison is
+  // strict (no pixel tolerance): mask dynamic areas (dates, ads, carousels) with the `mask` option.
+  // Create or refresh them with: npm run test:update-baselines
+  snapshotPathTemplate: snapshots('{projectName}'),
+  expect: {
+    toHaveScreenshot: { animations: 'disabled', caret: 'hide' },
+  },
   use: {
     baseURL: process.env.BASE_URL,
     headless,
