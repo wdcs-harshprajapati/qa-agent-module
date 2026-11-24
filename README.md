@@ -52,7 +52,8 @@ Restart Claude Code after installing. Then check `/mcp`: it should list `plugin:
 2. Run `/qa:run-qa https://your-app.example.com`.
 3. Answer the intake questions: Web2 or Web3, login details, test data, and whether write actions (forms, orders) are safe.
 4. Review the test plan Claude shows you. Approve it or ask for changes. No code is generated before you approve.
-5. Claude generates the suite, runs it, heals test issues, runs the security audit, and writes the report.
+5. Choose the run settings: which browsers to test (Chrome, Firefox, Safari, Mobile Chrome, Mobile Safari), and whether screenshots and video are recorded for every test, only on failure, or not at all.
+6. Claude generates the suite, runs it in a visible browser, heals test issues, runs the security audit, and writes the report.
 
 Claude never guesses credentials, OTPs, or business rules. When something is missing, it asks you.
 
@@ -61,14 +62,18 @@ Claude never guesses credentials, OTPs, or business rules. When something is mis
 ```
 your-workspace/
 ├── CLAUDE.md               # QA rules for this workspace (read by Claude automatically)
-├── .env / .env.example     # BASE_URL and credentials (.env is git-ignored)
-├── playwright.config.ts    # Desktop Chrome + Mobile Safari, single-tab mode
+├── .env / .env.example     # BASE_URL, credentials, browsers, screenshot/video settings (.env is git-ignored)
+├── playwright.config.ts    # 5 browser projects, headed, single-tab mode
 ├── specs/test-plan.md      # Approved plan: UI-xx, POS-xx, NEG-xx cases
 ├── pages/*.page.ts         # Page objects (all selectors live here)
 ├── fixtures/auth.fixture.ts# Shared tab, state reset, saved login session
 ├── tests/*.spec.ts         # Positive Cases / Negative Cases specs
+├── reporters/bug-reporter.ts # Writes a Jira-ready bug report for each failed test
 ├── reports/
 │   ├── qa-report-latest.md # Summary, coverage, defects, security
+│   ├── failed-test-cases.md  # All failed tests: description, steps, expected, actual
+│   ├── failed-test-cases.csv # Jira "Import issues from CSV"
+│   ├── bug-reports/        # One ticket per failed test and browser
 │   ├── healing-log.md      # What was fixed, what is a real defect
 │   └── security-findings.md
 └── README.md               # Runbook for the generated suite
@@ -77,8 +82,10 @@ your-workspace/
 Run the generated suite without Claude:
 
 ```bash
-npm test               # all tests, one tab per browser
-npm run test:headed    # watch the browser
+npm test               # all tests in the browsers from .env, headed, one tab per browser
+npm run test:headless  # no browser window
+npm run test:desktop   # Chrome, Firefox, Safari
+npm run test:mobile    # Mobile Chrome (Galaxy S25 Ultra), Mobile Safari (iPhone 16 Pro)
 npm run test:ui        # Playwright UI mode
 npm run report         # HTML report with screenshots and traces
 ```
@@ -99,6 +106,10 @@ npm run report         # HTML report with screenshots and traces
 ### Defaults
 
 - **Web2** unless you choose Web3. For Web3 you connect the wallet yourself; Claude never asks for a seed phrase or private key.
+- **Browsers:** Chrome, Firefox, Safari (1440x900), Mobile Chrome (Samsung Galaxy S25 Ultra, 412x891), and Mobile Safari (iPhone 16 Pro, 402x874). You pick which ones after approving the plan.
+- **Headed:** tests run in a visible browser. Set `HEADLESS=true` in `.env` or use `npm run test:headless` to hide it.
+- **Screenshots and video:** on for every test by default; you can choose only-on-failure or off.
+- **Bug reports:** every failed test gets a Jira-ready ticket (description, preconditions, steps, expected, actual, environment, attachments) in `reports/bug-reports/`, plus `reports/failed-test-cases.csv` for Jira CSV import.
 - **Single-tab mode:** all cases run in order in one browser tab per project. A failed test opens a new tab, because Playwright restarts its worker after a failure.
 - **No bug masking:** assertions are never weakened to make tests pass.
 - **Secrets only in `.env`**, never in code, reports, or chat.
@@ -122,3 +133,5 @@ claude plugin uninstall qa@qa-agent-module
 | Two `playwright` MCP servers | A user-level `playwright` server from an older setup also exists. Remove it with `claude mcp remove playwright -s user`. |
 | Browser not found | Install Google Chrome, or ask Claude to run the MCP `browser_install` tool. |
 | `BASE_URL is not set` | Copy `.env.example` to `.env` in the workspace and fill in the values. |
+| `QA_PROJECTS has unknown project(s)` | Use only `all`, `Chrome`, `Firefox`, `Safari`, `Mobile Chrome`, `Mobile Safari` in `.env`. |
+| Firefox or Safari browser missing | Run `npm run setup` in the workspace. |

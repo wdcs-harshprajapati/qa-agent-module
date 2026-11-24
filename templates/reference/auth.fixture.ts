@@ -20,6 +20,11 @@ import path from 'path';
 // ADAPT: import the page objects this suite uses.
 // import { LoginPage } from '../pages/login.page';
 
+// Artifacts per test, set in .env by /qa:run-qa. Do not ADAPT.
+//   SCREENSHOT: on | only-on-failure | off   VIDEO: on | retain-on-failure | off
+const SCREENSHOT = (['on', 'only-on-failure', 'off'] as const).find((v) => v === process.env.SCREENSHOT) ?? 'on';
+const VIDEO = (['on', 'retain-on-failure', 'off'] as const).find((v) => v === process.env.VIDEO) ?? 'on';
+
 type TestFixtures = {
   /** true (default): test starts logged in. Use `test.use({ authenticated: false })` for guest tests. */
   authenticated: boolean;
@@ -144,15 +149,31 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     if (authenticated) await authSession.apply(sharedPage);
 
     await context.tracing.startChunk({ title: testInfo.title });
+    const video = testInfo.outputPath('video.webm');
+    const recording = VIDEO !== 'off';
+    if (recording) await sharedPage.screencast.start({ path: video });
+
     await use(sharedPage);
 
-    // Failure artifacts (built-in screenshot/trace options only cover per-test contexts).
-    if (testInfo.status !== testInfo.expectedStatus) {
-      const screenshot = testInfo.outputPath('test-failed.png');
+    // Built-in screenshot/video/trace options only cover per-test contexts, so the fixture
+    // records them itself. SCREENSHOT and VIDEO come from .env (chosen in /qa:run-qa).
+    const failed = testInfo.status !== testInfo.expectedStatus;
+    if (SCREENSHOT === 'on' || (SCREENSHOT === 'only-on-failure' && failed)) {
+      const screenshot = testInfo.outputPath(failed ? 'test-failed.png' : 'test-finished.png');
       await sharedPage.screenshot({ path: screenshot }).catch(() => undefined);
       if (fs.existsSync(screenshot)) {
         await testInfo.attach('screenshot', { path: screenshot, contentType: 'image/png' });
       }
+    }
+    if (recording) {
+      await sharedPage.screencast.stop().catch(() => undefined);
+      if (fs.existsSync(video)) {
+        if (VIDEO === 'on' || failed) await testInfo.attach('video', { path: video, contentType: 'video/webm' });
+        else fs.rmSync(video, { force: true });
+      }
+    }
+
+    if (failed) {
       const trace = testInfo.outputPath('trace.zip');
       await context.tracing.stopChunk({ path: trace });
       await testInfo.attach('trace', { path: trace, contentType: 'application/zip' });
