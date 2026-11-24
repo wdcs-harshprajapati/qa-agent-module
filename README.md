@@ -68,9 +68,11 @@ your-workspace/
 ├── playwright.config.ts    # 5 browser projects, headed, single-tab mode
 ├── specs/test-plan.md      # Approved plan: UI-xx, POS-xx, NEG-xx cases
 ├── pages/*.page.ts         # Page objects (all selectors live here)
-├── fixtures/auth.fixture.ts# Shared tab, state reset, saved login session
+├── fixtures/shared-page.fixture.ts # Single-tab fixture (copied from the plugin, unchanged)
+├── fixtures/auth.fixture.ts# Extends it: state reset, saved login session
 ├── specs/api-inventory.md  # API calls seen while exploring (no values)
 ├── tests/*.spec.ts         # Positive/Negative, @visual, @api, @perf, @mobile-ux specs
+├── tests/security-report.spec.ts # Shows security findings in the HTML report (from the plugin, unchanged)
 ├── tests/__screenshots__/  # Visual regression baselines
 ├── reporters/bug-reporter.ts # Writes a Jira-ready bug report for each failed test
 ├── reports/
@@ -85,7 +87,9 @@ your-workspace/
 │   ├── secret-scan.json    # Exposed secrets and files (redacted)
 │   ├── runs/<run-id>/      # Archive of each run with screenshots, videos, traces
 │   ├── healing-log.md      # What was fixed, what is a real defect
-│   └── security-findings.md
+│   ├── security-findings.md
+│   └── security-findings.json # Same findings as data; becomes the Security project in the HTML report
+├── playwright-report/      # HTML report: browser projects and the Security project
 └── README.md               # Runbook for the generated suite
 ```
 
@@ -100,7 +104,7 @@ npm run test:failed    # only the tests that failed last time
 npm run test:visual    # visual regression (refresh baselines: npm run test:update-baselines)
 npm run test:api       # API tests; also test:perf and test:mobile-ux
 npm run test:ui        # Playwright UI mode
-npm run report         # HTML report with screenshots and traces
+npm run report         # HTML report with screenshots, traces, and security results
 ```
 
 ## How It Works
@@ -127,11 +131,40 @@ npm run report         # HTML report with screenshots and traces
 - **Mobile modes:** emulation by default; real devices on BrowserStack (account needed) or real Chrome in an Android emulator (Android SDK). iOS simulators are not supported by Playwright.
 - **More checks:** visual regression, API tests from the endpoints seen while exploring, Web Vitals on key pages (only "poor" values fail), mobile UX (tap targets, horizontal scroll, text size), and an exposed-secret scan in the security audit.
 - **Playwright Test MCP:** the plugin also starts Playwright's own Test MCP server (`plugin:qa:playwright-test`) inside a QA workspace, so the generator and healer can debug tests at the exact failure point. Reconnect it with `/mcp` after the first scaffold.
-- **Single-tab mode:** all cases run in order in one browser tab per project. A failed test opens a new tab, because Playwright restarts its worker after a failure.
+- **Single-tab mode:** all cases run one by one in one browser tab per project (`WORKERS` defaults to 1). See [Single tab](#single-tab).
+- **Security in the HTML report:** security-auditor findings show up next to the browser results. See [One HTML report with security results](#one-html-report-with-security-results).
 - **No bug masking:** assertions are never weakened to make tests pass.
 - **Secrets only in `.env`**, never in code, reports, or chat.
 - **Local only:** no CI/CD files are generated.
 - **Script fallback:** if the Playwright MCP server cannot connect, Claude asks whether to explore and heal with local Playwright scripts instead.
+
+## Single tab
+
+Cases run strictly one by one in one browser tab per browser project. Playwright normally opens a new window for every test; this module avoids that.
+
+| File | Role |
+|---|---|
+| `templates/playwright.config.ts` | `WORKERS` from `.env` (default 1), `fullyParallel: false`, `retries: 0`. Built-in `screenshot`, `video`, and `trace` are `off` because the fixture handles them. |
+| `templates/shared-page.fixture.ts` | Copied to `fixtures/` unchanged. Worker-scoped `sharedContext` and `sharedPage` replace the built-in `context` and `page`, so every test in a worker shares one tab. After each test it closes extra tabs, removes `page.route()` mocks and listeners, attaches a screenshot (`SCREENSHOT`), and attaches a trace only when the test failed. |
+| `templates/reference/auth.fixture.ts` | The generator adapts it to `fixtures/auth.fixture.ts`. It extends the shared `test`, resets cookies and storage between tests, and logs in once per worker (state saved under `.auth/`). |
+
+Specs import `test` and `expect` from `fixtures/auth.fixture`, never from `@playwright/test`, and never create contexts or pages. Parallel runs happen only when you ask: Claude writes `WORKERS=<n>` to `.env` and warns that each worker opens its own window.
+
+Known limits:
+
+- Playwright kills the worker after any failed test, so one new window opens after each failure. This is Playwright's behavior and is accepted.
+- Video is one recording per browser project (`test-results/session-videos/<project>/`), not one per test, because a shared tab has one recording.
+
+## One HTML report with security results
+
+`qa:security-auditor` writes `reports/security-findings.md` and `reports/security-findings.json` (an array of `SEC-xx` findings with status, risk, affected, redacted evidence, remediation, and a reason for Not Tested). `tests/security-report.spec.ts` (copied from `templates/security-report.spec.ts`, never edited) turns them into tests in a browserless `Security` project that `playwright.config.ts` adds only when the JSON file exists:
+
+- **Pass** shows green.
+- **Fail** shows red with a severity annotation, so `reporters/bug-reporter.ts` files a bug report for it too.
+- **Not Tested** is skipped with the reason.
+- `SEC-00` attaches the overview and the findings markdown.
+
+Order in `/qa:run-qa`: generator, security-auditor, test-healer (its final run includes `Security`), qa-reporter. The healer never heals `SEC-*` failures, because they are security findings. Run `npm run report` to see browser results and security results in one report.
 
 ## Update and Uninstall
 

@@ -26,7 +26,9 @@ if (!process.env.BASE_URL) {
 //   QA_PROJECTS     comma-separated project names below, or "all" (default: all)
 //   HEADLESS        true runs without a browser window (default: false, headed)
 //   QA_MOBILE_MODE  emulation (default) | android-emulator | browserstack
-//   SCREENSHOT / VIDEO are read by fixtures/auth.fixture.ts (see .env.example).
+//   WORKERS         parallel workers (default 1). Keep 1 so cases run one by one in a single tab.
+//                   Raise only when the user explicitly asks for parallel runs (one window per worker).
+//   SCREENSHOT / VIDEO are read by fixtures/shared-page.fixture.ts (see .env.example).
 const headless = process.env.HEADLESS === 'true';
 const mobileMode = process.env.QA_MOBILE_MODE || 'emulation';
 if (!['emulation', 'android-emulator', 'browserstack'].includes(mobileMode)) {
@@ -49,7 +51,7 @@ const desktopViewport = { width: 1440, height: 900 };
 // BrowserStack) render differently from emulation, so they get their own baseline folder.
 const snapshots = (folder: string) => `{testDir}/__screenshots__/{platform}/${folder}/{testFilePath}/{arg}{ext}`;
 
-// Mobile projects per mode. The shared-tab fixture reads metadata.android / metadata.realDevice.
+// Mobile projects per mode. fixtures/shared-page.fixture.ts reads metadata.android / metadata.realDevice.
 // - android-emulator: Chrome inside a running Android emulator (adb). iOS simulators need macOS
 //   and are not supported by Playwright, so Mobile Safari stays emulated in this mode.
 // - browserstack: real devices through the BrowserStack SDK (npm run test:browserstack).
@@ -111,16 +113,27 @@ const unknown = selected.filter((s) => s !== 'all' && !allProjects.some((p) => p
 if (unknown.length) {
   throw new Error(`QA_PROJECTS has unknown project(s): ${unknown.join(', ')}. Valid: all, ${allProjects.map((p) => p.name).join(', ')}`);
 }
-const projects = selected.includes('all') ? allProjects : allProjects.filter((p) => selected.includes(p.name as string));
+const browserProjects = (selected.includes('all') ? allProjects : allProjects.filter((p) => selected.includes(p.name as string))).map(
+  (p): Project => ({ ...p, testIgnore: /security-report\.spec\.ts/ }),
+);
+
+// Browserless project that shows security-auditor results in the HTML report. Added only when the audit produced findings.
+const securityProject: Project[] = fs.existsSync('reports/security-findings.json')
+  ? [{ name: 'Security', metadata: { device: 'No browser (audit results)' }, retries: 0, testMatch: /security-report\.spec\.ts/ }]
+  : [];
+const projects = [...browserProjects, ...securityProject];
+
+const workers = Number.parseInt(process.env.WORKERS ?? '', 10) > 0 ? Number.parseInt(process.env.WORKERS as string, 10) : 1;
 
 export default defineConfig({
   testDir: './tests',
   // Single-tab mode: one worker, tests in order, each project reuses one tab
-  // (see fixtures/auth.fixture.ts). Projects run one after the other.
+  // (see fixtures/shared-page.fixture.ts). Projects run one after the other.
+  // WORKERS > 1 (explicit parallel runs only) opens one window per worker.
   fullyParallel: false,
   forbidOnly: false,
   retries: 0,
-  workers: 1,
+  workers: useBurp ? 1 : workers,
   reporter: [
     ['list'],
     ['json', { outputFile: 'reports/playwright-results.json' }],
@@ -138,13 +151,13 @@ export default defineConfig({
   use: {
     baseURL: process.env.BASE_URL,
     headless,
-    // If the app uses a custom test id attribute (e.g. data-test), set it here AND in the
-    // shared-tab fixture (playwright.selectors.setTestIdAttribute).
+    // If the app uses a custom test id attribute (e.g. data-test), set it here. The shared-page
+    // fixture applies it with playwright.selectors.setTestIdAttribute (manual contexts ignore it).
     // testIdAttribute: 'data-test',
     proxy: useBurp ? { server: 'http://127.0.0.1:8080' } : undefined,
     ignoreHTTPSErrors: useBurp,
-    // Built-in recording only covers per-test contexts, so it stays off. The shared-tab fixture
-    // records screenshots and per-test video (page.screencast) based on SCREENSHOT and VIDEO in .env.
+    // Built-in recording only covers per-test contexts, so it stays off. fixtures/shared-page.fixture.ts
+    // handles screenshot, trace, and video (SCREENSHOT and VIDEO in .env) for the shared tab.
     screenshot: 'off',
     video: 'off',
     trace: 'off',

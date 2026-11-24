@@ -21,15 +21,16 @@ This folder is a QA workspace created by the `qa` plugin (`/qa:run-qa <url>`). T
 - Local execution only. Never create CI/CD files (GitHub Actions, GitLab CI, Jenkins, Docker).
 
 ## 4. Single-Tab Mode (Default)
-- `playwright.config.ts`: `workers: 1`, `fullyParallel: false`, `retries: 0`. Keep these unless the user asks for parallel runs.
-- `fixtures/auth.fixture.ts` gives each project one shared tab, resets cookies and storage between tests, and restores the saved session (`.auth/`) for authenticated tests. Login happens in that same tab.
-- Use one `test` object everywhere. Logged-out tests use `test.use({ authenticated: false })` inside their `describe`. A second test object forces a new worker, which opens a new tab.
+- `playwright.config.ts`: `fullyParallel: false`, `retries: 0`, and `workers` from `WORKERS` in `.env` (default 1). Never raise `WORKERS`; only the user does, when they ask for parallel runs (one window per worker).
+- `fixtures/shared-page.fixture.ts` (copied unchanged from the plugin) gives each worker one shared tab, attaches screenshots and failure traces, records one session video per browser project, and closes extra tabs and removes mocks and listeners after each test.
+- `fixtures/auth.fixture.ts` extends it: it resets cookies and storage between tests and restores the saved session (`.auth/`) for authenticated tests. Login happens once per worker in that same tab.
+- Specs import `test` and `expect` from `../fixtures/auth.fixture`, never from `@playwright/test` (only `tests/security-report.spec.ts` does). Never call `newContext()` or `newPage()`. Logged-out tests use `test.use({ authenticated: false })` inside their `describe`. A second test object forces a new worker, which opens a new tab.
 - Playwright restarts the worker after a failed test, so each failure opens a new tab. This is expected.
 
 ## 5. Browsers, Headed Mode, and Artifacts
 - Projects: `Chrome`, `Firefox`, `Safari` (1440x900), `Mobile Chrome` (Samsung Galaxy S25 Ultra, 412x891), `Mobile Safari` (iPhone 16 Pro, 402x874). `QA_PROJECTS` in `.env` selects which ones run.
 - Tests run headed (visible browser) by default. `HEADLESS=true` in `.env` or `npm run test:headless` turns the window off.
-- `SCREENSHOT` and `VIDEO` in `.env` control per-test artifacts. The shared-tab fixture records them (video through `page.screencast`), because the built-in options only cover per-test contexts.
+- `SCREENSHOT` and `VIDEO` in `.env` control artifacts. The shared-page fixture records them, because the built-in options only cover per-test contexts: screenshots per test, traces on failure, and video as one recording per browser project (`test-results/session-videos/<project>/`).
 - Only the user changes `QA_PROJECTS`, `HEADLESS`, `SCREENSHOT`, and `VIDEO`. Agents never edit them (the same applies to `QA_MOBILE_MODE` and `QA_ENV`).
 - Mobile browsers run in one of three modes (`QA_MOBILE_MODE`): `emulation` (default screen sizes), `android-emulator` (real Chrome in an Android emulator via adb; Mobile Safari stays emulated), or `browserstack` (real devices, `npm run test:browserstack`).
 - Several environments: `.env.<name>` holds each environment's `BASE_URL` and credentials, `QA_ENV` picks one. Never copy secrets between environment files.
@@ -62,12 +63,18 @@ This folder is a QA workspace created by the `qa` plugin (`/qa:run-qa <url>`). T
 - Non-destructive only: benign markers, no brute force, no load or DoS, no data deletion, no exploitation beyond proving a finding exists.
 - Respect the write-safety answer from intake.
 
-## 10. Bug Severity
+## 10. Security Results in the HTML Report
+- `qa:security-auditor` writes `reports/security-findings.md` and `reports/security-findings.json` (array of `SEC-xx` findings with status, risk, evidence, remediation).
+- `tests/security-report.spec.ts` (from the plugin templates, never edited) turns each finding into a test in the browserless `Security` project of `playwright.config.ts`, which exists only when the JSON file exists. Pass is green, Fail is red with a `severity` annotation (so it gets a bug report), Not Tested is skipped with its reason. `SEC-00` attaches the overview.
+- `qa:test-healer` never heals, edits, or skips `SEC-*` failures: they are security findings, not test problems.
+- `npm run report` opens one HTML report with every browser project and the `Security` project.
+
+## 11. Bug Severity
 - **Critical:** crash, data loss, authentication bypass, broken core checkout or transaction flow.
 - **High:** major feature failure with no workaround, API `500` errors, session token still valid after logout or wallet disconnect.
 - **Medium:** functional edge-case failure, missing input validation, `@axe-core/playwright` serious or critical violations, responsive layout collisions.
 - **Low:** minor cosmetic issues, non-blocking console warnings.
 
-## 11. Exploration Mode
+## 12. Exploration Mode
 - Default: Playwright MCP (the `qa` plugin's bundled `playwright` server).
 - If the user approved script fallback (Run Context `Exploration: scripts`), explore and heal with local Node scripts that use the workspace's `node_modules/playwright`. Put temporary scripts in `.qa-tmp/` (git-ignored) and delete them when done.
