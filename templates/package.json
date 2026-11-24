@@ -6,19 +6,22 @@
     "node": ">=18"
   },
   "scripts": {
-    "setup": "playwright install chromium webkit",
+    "setup": "playwright install chromium firefox webkit",
     "test": "playwright test",
-    "test:headed": "playwright test --headed",
+    "test:headless": "cross-env HEADLESS=true playwright test",
     "test:ui": "playwright test --ui",
     "test:debug": "playwright test --debug",
     "test:positive": "playwright test -g \"Positive Cases\"",
     "test:negative": "playwright test -g \"Negative Cases\"",
+    "test:desktop": "cross-env QA_PROJECTS=\"Chrome,Firefox,Safari\" playwright test",
+    "test:mobile": "cross-env QA_PROJECTS=\"Mobile Chrome,Mobile Safari\" playwright test",
+    "test:all-browsers": "cross-env QA_PROJECTS=all playwright test",
     "test:burp": "cross-env USE_BURP=true playwright test",
     "report": "playwright show-report"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.10.0",
-    "@playwright/test": "^1.50.0",
+    "@playwright/test": "^1.61.0",
     "@types/node": "^22.0.0",
     "cross-env": "^7.0.3",
     "dotenv": "^16.4.0",

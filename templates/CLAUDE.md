@@ -26,24 +26,35 @@ This folder is a QA workspace created by the `qa` plugin (`/qa:run-qa <url>`). T
 - Use one `test` object everywhere. Logged-out tests use `test.use({ authenticated: false })` inside their `describe`. A second test object forces a new worker, which opens a new tab.
 - Playwright restarts the worker after a failed test, so each failure opens a new tab. This is expected.
 
-## 5. Reliability Lessons
+## 5. Browsers, Headed Mode, and Artifacts
+- Projects: `Chrome`, `Firefox`, `Safari` (1440x900), `Mobile Chrome` (Samsung Galaxy S25 Ultra, 412x891), `Mobile Safari` (iPhone 16 Pro, 402x874). `QA_PROJECTS` in `.env` selects which ones run.
+- Tests run headed (visible browser) by default. `HEADLESS=true` in `.env` or `npm run test:headless` turns the window off.
+- `SCREENSHOT` and `VIDEO` in `.env` control per-test artifacts. The shared-tab fixture records them (video through `page.screencast`), because the built-in options only cover per-test contexts.
+- Only the user changes `QA_PROJECTS`, `HEADLESS`, `SCREENSHOT`, and `VIDEO`. Agents never edit them.
+
+## 6. Bug Reports for Failed Tests
+- Every test carries `description`, `precondition`, `step`, and `expected` annotations copied from `specs/test-plan.md`, and wraps actions in `test.step()` with the same wording.
+- `reporters/bug-reporter.ts` turns each failed test into a Jira-ready ticket: `reports/bug-reports/<CASE-ID>__<browser>.md`, `reports/failed-test-cases.md`, and `reports/failed-test-cases.csv`.
+- Confirmed defects get a `severity` annotation (`Critical`/`High`/`Medium`/`Low`) from the healer.
+
+## 7. Reliability Lessons
 - Contexts created by hand (`browser.newContext`/`newPage`) ignore the config's `testIdAttribute`. Set it with `playwright.selectors.setTestIdAttribute()` in worker fixtures.
 - After a click that changes the SPA route, wait for an element of the new view inside the page object before returning. Strict-mode violations fail at once and do not retry, so they can hit the old view.
 - Menus and drawers: re-click only while the menu is still closed (a retry can toggle an open menu shut). Treat "open" as the item being in the viewport. A closed `aria-hidden` menu does not match role locators.
 - For form fields that can re-render right after navigation, confirm the value with `toHaveValue` and refill if it was dropped.
 - Before calling something flaky, rerun it with `--repeat-each` to measure it. Do not hide flakiness.
 
-## 6. Security Testing Scope
+## 8. Security Testing Scope
 - Test only the target origin confirmed at intake. Never scan third-party domains.
 - Non-destructive only: benign markers, no brute force, no load or DoS, no data deletion, no exploitation beyond proving a finding exists.
 - Respect the write-safety answer from intake.
 
-## 7. Bug Severity
+## 9. Bug Severity
 - **Critical:** crash, data loss, authentication bypass, broken core checkout or transaction flow.
 - **High:** major feature failure with no workaround, API `500` errors, session token still valid after logout or wallet disconnect.
 - **Medium:** functional edge-case failure, missing input validation, `@axe-core/playwright` serious or critical violations, responsive layout collisions.
 - **Low:** minor cosmetic issues, non-blocking console warnings.
 
-## 8. Exploration Mode
+## 10. Exploration Mode
 - Default: Playwright MCP (the `qa` plugin's bundled `playwright` server).
 - If the user approved script fallback (Run Context `Exploration: scripts`), explore and heal with local Node scripts that use the workspace's `node_modules/playwright`. Put temporary scripts in `.qa-tmp/` (git-ignored) and delete them when done.
