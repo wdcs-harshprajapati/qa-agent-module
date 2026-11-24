@@ -3,27 +3,25 @@
  * fixtures/auth.fixture.ts and adapts the parts marked ADAPT. Do not import it from here.
  *
  * Design:
- * - One browser context + one tab per worker (worker-scoped sharedContext/sharedPage).
- *   The built-in `page`/`context` fixtures return them, so every test runs in the same tab.
+ * - It extends `test` from ./shared-page.fixture (copied unchanged from the plugin's templates),
+ *   which gives every test in a worker the same browser context and tab, records screenshots,
+ *   traces, and the session video, and closes extra tabs after each test. This file adds login.
  * - Before each test the tab is reset (cookies, localStorage, sessionStorage), then the
  *   saved session is restored for authenticated tests (storageState saved under .auth/).
  * - Login runs in the shared tab (never a second tab) and is refreshed before the session
  *   cookie expires.
- * - Use ONE test object everywhere. Guest tests use `test.use({ authenticated: false })`.
- *   A second test object (base.extend) changes the worker fixtures, which forces a new
- *   worker and therefore a new tab.
+ * - Specs import `test` and `expect` from THIS file and nowhere else (never from
+ *   '@playwright/test'). Guest tests use `test.use({ authenticated: false })`. Importing both this
+ *   file and shared-page.fixture in one suite creates two test objects, which forces a new worker
+ *   and therefore a new tab.
  * - Playwright always restarts the worker after a failed test, so a failure opens a new tab.
  */
-import { test as base, expect, _android, AndroidDevice, BrowserContext, Cookie, Page } from '@playwright/test';
+import { test as base, expect } from './shared-page.fixture';
+import type { Cookie, Page } from '@playwright/test';
 import fs from 'fs';
 import path from 'path';
 // ADAPT: import the page objects this suite uses.
 // import { LoginPage } from '../pages/login.page';
-
-// Artifacts per test, set in .env by /qa:run-qa. Do not ADAPT.
-//   SCREENSHOT: on | only-on-failure | off   VIDEO: on | retain-on-failure | off
-const SCREENSHOT = (['on', 'only-on-failure', 'off'] as const).find((v) => v === process.env.SCREENSHOT) ?? 'on';
-const VIDEO = (['on', 'retain-on-failure', 'off'] as const).find((v) => v === process.env.VIDEO) ?? 'on';
 
 type TestFixtures = {
   /** true (default): test starts logged in. Use `test.use({ authenticated: false })` for guest tests. */
@@ -32,8 +30,6 @@ type TestFixtures = {
 };
 
 type WorkerFixtures = {
-  sharedContext: BrowserContext;
-  sharedPage: Page;
   authSession: AuthSession;
 };
 
@@ -90,54 +86,6 @@ class AuthSession {
 export const test = base.extend<TestFixtures, WorkerFixtures>({
   authenticated: [true, { option: true }],
 
-  sharedContext: [
-    async ({ browser, playwright }, use, workerInfo) => {
-      const u = workerInfo.project.use;
-      // Manually created contexts do not get the config's testIdAttribute; set it globally.
-      if (u.testIdAttribute) playwright.selectors.setTestIdAttribute(u.testIdAttribute);
-      const common = { baseURL: u.baseURL, proxy: u.proxy, ignoreHTTPSErrors: u.ignoreHTTPSErrors, acceptDownloads: true };
-      const meta = workerInfo.project.metadata ?? {};
-      let device: AndroidDevice | undefined;
-      let context: BrowserContext;
-
-      if (meta.android) {
-        // QA_MOBILE_MODE=android-emulator: Chrome inside a running emulator. ANDROID_SERIAL picks
-        // one device when several are attached (see `adb devices`).
-        const devices = await _android.devices();
-        device = devices.find((d) => !process.env.ANDROID_SERIAL || d.serial() === process.env.ANDROID_SERIAL);
-        if (!device) throw new Error('No Android emulator found. Start one and check `adb devices`.');
-        await device.shell('am force-stop com.android.chrome');
-        context = await device.launchBrowser(common);
-      } else if (meta.realDevice) {
-        // QA_MOBILE_MODE=browserstack: real device, so no viewport or user agent emulation.
-        context = await browser.newContext(common);
-      } else {
-        context = await browser.newContext({
-          ...common,
-          viewport: u.viewport,
-          screen: u.screen,
-          userAgent: u.userAgent,
-          deviceScaleFactor: u.deviceScaleFactor,
-          isMobile: u.isMobile,
-          hasTouch: u.hasTouch,
-        });
-      }
-      await context.tracing.start({ screenshots: true, snapshots: true });
-      await use(context);
-      await context.tracing.stop();
-      await context.close();
-      await device?.close();
-    },
-    { scope: 'worker' },
-  ],
-
-  sharedPage: [
-    async ({ sharedContext }, use) => {
-      await use(await sharedContext.newPage());
-    },
-    { scope: 'worker' },
-  ],
-
   authSession: [
     async ({}, use, workerInfo) => {
       const slug = workerInfo.project.name.replace(/\W+/g, '-').toLowerCase();
@@ -148,15 +96,9 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     { scope: 'worker' },
   ],
 
-  context: async ({ sharedContext }, use) => {
-    await use(sharedContext);
-  },
-
-  page: async ({ sharedPage, authSession, authenticated }, use, testInfo) => {
-    const context = sharedPage.context();
-
+  page: async ({ sharedPage, authSession, authenticated }, use) => {
     // Reset state left by the previous test. Storage can only be cleared on the app origin.
-    await context.clearCookies();
+    await sharedPage.context().clearCookies();
     await sharedPage.goto('/');
     await sharedPage.evaluate(() => {
       localStorage.clear();
@@ -164,38 +106,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     });
     if (authenticated) await authSession.apply(sharedPage);
 
-    await context.tracing.startChunk({ title: testInfo.title });
-    const video = testInfo.outputPath('video.webm');
-    const recording = VIDEO !== 'off';
-    if (recording) await sharedPage.screencast.start({ path: video });
-
     await use(sharedPage);
-
-    // Built-in screenshot/video/trace options only cover per-test contexts, so the fixture
-    // records them itself. SCREENSHOT and VIDEO come from .env (chosen in /qa:run-qa).
-    const failed = testInfo.status !== testInfo.expectedStatus;
-    if (SCREENSHOT === 'on' || (SCREENSHOT === 'only-on-failure' && failed)) {
-      const screenshot = testInfo.outputPath(failed ? 'test-failed.png' : 'test-finished.png');
-      await sharedPage.screenshot({ path: screenshot }).catch(() => undefined);
-      if (fs.existsSync(screenshot)) {
-        await testInfo.attach('screenshot', { path: screenshot, contentType: 'image/png' });
-      }
-    }
-    if (recording) {
-      await sharedPage.screencast.stop().catch(() => undefined);
-      if (fs.existsSync(video)) {
-        if (VIDEO === 'on' || failed) await testInfo.attach('video', { path: video, contentType: 'video/webm' });
-        else fs.rmSync(video, { force: true });
-      }
-    }
-
-    if (failed) {
-      const trace = testInfo.outputPath('trace.zip');
-      await context.tracing.stopChunk({ path: trace });
-      await testInfo.attach('trace', { path: trace, contentType: 'application/zip' });
-    } else {
-      await context.tracing.stopChunk();
-    }
   },
 
   // ADAPT: page object fixtures, e.g.
